@@ -1,0 +1,187 @@
+---
+title: "NYC Shooting Incidents"
+author: "Nicholas Anadon"
+date: "2025-04-12"
+output: html_document
+---
+
+-Data set is NYPD Shooting Incident Data(Historic) last updated on 4/26/2024 on catalog.data.gov.
+
+-Data entries range from 1/1/2006 to 12/29/2023
+
+-What boroughs have more incidents than others and how many total incidents are there across all boroughs?
+
+
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+```
+
+
+
+
+```{r}
+#This code starts the cleaning process
+nyshooting <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nyshooting <- read.csv(nyshooting)
+
+#Changing weird values to UNKNOWN so most data is not lost
+sore_val <- c("", "(null)", "1028", "1020", "940", "224", "1022")
+
+#Changing names of columns to easier names
+nyshooting <- rename(nyshooting, ID_Key = "INCIDENT_KEY", Date = "OCCUR_DATE", Time = "OCCUR_TIME", Boro = "BORO", Inci_Loc = "LOCATION_DESC", Death = "STATISTICAL_MURDER_FLAG",
+                     Perp_Age = "PERP_AGE_GROUP", Perp_Sex = "PERP_SEX", Perp_Race = "PERP_RACE",
+                     Vic_Age = "VIC_AGE_GROUP", Vic_Sex = "VIC_SEX", Vic_Race = "VIC_RACE", Precinct = 
+                       "PRECINCT", Jur_Code = "JURISDICTION_CODE") %>%
+ select(-"LOC_OF_OCCUR_DESC", -"LOC_CLASSFCTN_DESC", -"X_COORD_CD", -"Y_COORD_CD",
+        -"Latitude", -"Longitude", -"Lon_Lat", -"ID_Key", -"Inci_Loc") %>%
+  mutate(across(where(is.character),
+                ~ifelse(.x %in% sore_val, "UNKNOWN", .x)))
+
+nyshooting <- na.omit(nyshooting)
+nyshooting$Date <- as.Date(nyshooting$Date, format = "%m/%d/%Y")
+nyshooting$Death <- as.logical(nyshooting$Death)
+nyshooting$Jur_Code <- as.factor(nyshooting$Jur_Code)
+nyshooting$Boro <- as.factor(nyshooting$Boro)
+nyshooting$Precinct <- as.factor(nyshooting$Precinct)
+nyshooting$Perp_Age <- as.factor(nyshooting$Perp_Age)
+nyshooting$Perp_Sex <- as.factor(nyshooting$Perp_Sex)
+nyshooting$Perp_Race <- as.factor(nyshooting$Perp_Race)
+nyshooting$Vic_Age <- as.factor(nyshooting$Vic_Age)
+nyshooting$Vic_Sex <- as.factor(nyshooting$Vic_Sex)
+nyshooting$Vic_Race <- as.factor(nyshooting$Vic_Race)
+#Variable Changes
+#Date: character -> date
+#Death: character -> logical
+#All other variables: character -> factor
+
+#Only 2 entries out of 28,562 entries contained NA values. Values are omitted
+#Date allows for quantitative analysis over a selected time
+#Logical for death illustrates a binary choice between survival and death of victim
+#Factor variables allow for easier categorical variable analysis
+
+head(nyshooting)
+```
+
+
+
+
+```{r}
+#Transformed data set nydeath of how many incidents occurred on each day
+nydeath <- nyshooting %>%
+  arrange(Date)
+
+nydeath <- nydeath %>%
+  group_by(Date, Death) %>%
+  summarise(count = n(), .groups = "drop")
+
+head(nydeath)
+
+#Condensed bar chart where survival incidents stack on death incidents
+#Total incidents for a given day are illustrated by the top point of survival bars
+nydeath %>%
+  ggplot(aes(x = Date, y = count, fill = Death)) +
+  geom_col(position = "stack") +
+  labs(title = "Daily Shooting Incidents in New York City",
+       x = "Date", y = "Number of Incidents") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 year") +
+  scale_y_continuous(limits = c(0, 50)) +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "darkgreen"),
+                    name = "Outcome",
+                    labels = c("FALSE" = "Survival", "TRUE" = "Death")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+```{r}
+#Transformed cumulative data set nydeath_cuml that shows the total amount of incidents over time
+nydeath_cuml <- nydeath %>%
+  arrange(Date) %>%
+  group_by(Death) %>%
+  mutate(cumulative_count = cumsum(count))
+
+#Condensed area chart of total amount of incidents over time
+#Same stacked bar rule as the stacked bar chart
+#Blue line: Linear line of best fit for survival incidents
+#Cyan line: Linear line of best fit for death incidents
+nydeath_cuml %>%
+  ggplot(aes(x = Date, y = cumulative_count, fill = Death, color = Death)) +
+  geom_area(position = "stack", color = NA) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 2) +
+  labs(title = "Daily Shooting Incidents in New York City",
+       x = "Date", y = "Number of Incidents",
+       fill = "Outcome", color = "Outcome") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 year") +
+  scale_y_continuous(limits = c(0, 30000)) +
+  scale_color_manual(values = c("TRUE" = "cyan", "FALSE" = "blue"),
+                     name = "Outcome",
+                     labels = c("TRUE" = "Death", "FALSE" = "Survival")
+                     ) +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "darkgreen"),
+                    name = "Outcome",
+                    labels = c("TRUE" = "Death", "FALSE" = "Survival")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+#Transformed data set nyboro that shows the amount of incidents within each NYC borough
+nyboro <- nyshooting %>%
+  arrange(Boro)
+
+nyboro <- nyboro %>%
+  group_by(Boro, Death) %>%
+  summarise(count = n(), .groups = "drop")
+
+nyboro
+
+#Bar chart showing incidents in boroughs across the data's timeframe
+nyboro %>%
+  ggplot(aes(x = Boro, y = count, fill = Death)) +
+  geom_col(position = "dodge", color = 'black') +
+  scale_y_continuous(limits = c(0, 10000)) +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "darkgreen"),
+                               name = "Outcome",
+                               labels = c("FALSE" = "Survival", "TRUE" = "Death")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Shooting Incidents in NYC Boroughs 1/1/2006-12/29/2023",
+       x = "Borough",
+       y = "Number of Incidents",
+       fill = "Death")
+```
+
+
+```{r}
+#Linear model of deaths as time passes
+mod <- lm(count ~ Date, data = nydeath)
+mod
+summary(mod)
+```
+**Data Findings:**
+Brooklyn was the borough with the largest number of incidents, but that does not 
+necessarily mean that it is the most dangerous borough to live in. There were a
+couple days where the number of incidents vastly outnumbered a calculated average,
+but for the most part the graph is consistent with incidents. The total number of
+incidents recorded from the clean data total to 23,034 incidents from January 1st, 2006 
+to December 29th, 2023.
+
+**Data Bias:**
+There are differing law enforcement standards within each NYC borough, so the results
+may not show the true danger within each area. Death is a logical argument in the cleaned data set, so
+we do not know the extent of how much victims were injured before they died or survived.
+Race and age of attackers and victims were not variables of interest for what I wanted to
+uncover. Bias statements to consider when looking over the cleaned data and analysis.
+```{r}
+write.csv(nyshooting, "nyshooting_cleaned.csv")
+```
+
+```{r}
+sessionInfo()
+```
