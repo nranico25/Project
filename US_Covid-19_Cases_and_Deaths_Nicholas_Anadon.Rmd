@@ -1,0 +1,336 @@
+---
+title: "US Covid-19 Cases and Deaths(1/23/20-3/9/23)"
+author: "Nicholas Anadon"
+date: "2025-04-26"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+```
+
+***Instructor Credit and Data Introduction:***
+Dr. Jane Wall was a sensational instructor for "Data Science as a Field" and
+per her permission on the final project, she has granted permission
+for the clean-up code of "COVID-19 Data Repository by the Center for Systems 
+Science and Engineering (CSSE) at Johns Hopkins University" on Github.com. This
+project gives a cleaned version of COVID-19 cases and deaths strictly within
+the United States. The time period of these cases and deaths reported starts at
+January 23, 2020 to March 9, 2023. The goal is to analyze what months had more
+cases and deaths than others and what are the summary statistics behind the 
+months with the most daily differences in COVID cases and deaths.
+
+***Data set URL:***
+https://github.com/pomkos/john-hopkins-covid-data
+
+```{r}
+US_cases <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+US_deaths <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+
+US_cases <- read.csv(US_cases)
+US_deaths <- read.csv(US_deaths)
+```
+
+## Dr. Wall's Cleanup Code and Summary of Code:
+
+```{r}
+#Values of US cases
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  select(-c(Lat, Long_))
+US_cases$date <- as.Date(sub("^X", "", US_cases$date), format = "%m.%d.%y")
+
+
+#Values of US deaths
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  select(-c(Lat, Long_))
+US_deaths$date <- as.Date(sub("^X", "", US_deaths$date), format = "%m.%d.%y")
+
+#Both US cases and US deaths have the same variables: 
+#Admin2 - City within the State
+#Province_State - US State
+#Country_Region - Always US(Important to note that this data set only has US
+#data while global statistics were also recorded)
+#Combined_Key - City + State
+#Population - Total population recorded at the start date
+#date - Date
+
+
+#full_join() combines the variables not included in both data sets.
+
+#cases - Cumulative sum of cases within a state as time progresses
+#deaths - Cumulative sum of deaths within a state as time progresses
+US <- US_cases %>%
+  full_join(US_deaths)
+
+#Eliminating negative values
+US <- US %>%
+  mutate(
+    cases = pmax(cases, 0),
+    deaths = pmax(deaths, 0)
+  )
+
+tail(US)
+summary(US)
+```
+
+
+```{r}
+#Combining data from all cities within states
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+tail(US_by_state)
+
+#Combining data from states within the United States
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+#deaths_per_mill - Number of deaths expected out of 1 million people in relation to the population
+tail(US_totals)
+summary(US_totals)
+```
+
+```{r}
+US_totals <- US_totals %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+#It's important to note that some values in new_cases and new_deaths are 
+#negative. This is okay, because we are looking at the difference between cases
+#of one day and the day prior regardless if someone already had the disease or
+#had just caught the disease that day. Thinking in real time, if there were 
+#fewer cases today than yesterday, the result would be negative.
+```
+
+## Nicholas Anadon's Data Fixes and Summaries:
+
+```{r}
+#Only one data value contained an NA value so it has been omitted
+
+#Months and Seasons are primary variables of interest
+
+#For simplicity in the next few data visualizations the seasons cut off after 
+#the month in which the next season begins
+US_totals <- na.omit(US_totals)
+US_totals$month <- month(US_totals$date, label = TRUE)
+US_totals$month_name <- month(US_totals$date, label = TRUE, abbr = TRUE)
+
+US_totals$Season <- case_when(
+  US_totals$month %in% c("Jan", "Feb", "Mar") ~ "Winter",
+  US_totals$month %in% c("Apr", "May", "Jun") ~ "Spring",
+  US_totals$month %in% c("Jul", "Aug", "Sep") ~ "Summer",
+  US_totals$month %in% c("Oct", "Nov", "Dec") ~ "Fall"
+)
+
+US_totals$Year <- year(US_totals$date)
+
+tail(US_totals)
+```
+
+***Timeframe of Covid-19 Cases and Deaths:***
+The time frame graphs do not give a cumulative sum, but instead read the 
+difference of new cases and deaths on one particular day compared to the day
+before. The drops in the graph represent zero or small negative change. Note
+the difference in scale between cases and deaths on the y-axis of the graphs
+where difference in cases reach over 1,000,000 on one day compared to deaths where the 
+maximum amount of difference of deaths between two days was over 4000. The red
+line in the "New Deaths in US by Month" graph illustrates a slow growth of 
+deaths per million of people.
+```{r}
+US_totals %>% ggplot() +
+  geom_area(aes(x = date, y = new_cases, fill = Season)) +
+  facet_wrap(~ Year, ncol = 1, scales = "free_x") +
+  scale_x_date(date_labels = "%b") +
+  scale_fill_manual(values = c(
+    "Winter" = "#00EEEE",
+    "Spring" = "#7FFF00",
+    "Summer" = "#CD6600",
+    "Fall" = "#9932CC"
+  )) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "New Cases in US by Month",
+       x = "Date",
+       y = "New Cases") + 
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_line(color = "#8B8B83"),
+    panel.grid.minor = element_blank()
+    )
+
+US_totals %>% ggplot() +
+  geom_area(aes(x = date, y = new_deaths, fill = Season)) +
+  geom_line(aes(x = date, y = deaths_per_mill), color = "red", linewidth = 1) +
+  facet_wrap(~ Year, ncol = 1, scales = "free_x") +
+  scale_x_date(date_labels = "%b") +
+  scale_fill_manual(values = c(
+    "Winter" = "#00EEEE",
+    "Spring" = "#7FFF00",
+    "Summer" = "#CD6600",
+    "Fall" = "#9932CC"
+  )) +
+  labs(title = "New Deaths in US by Month",
+       x = "Date",
+       y = "New Deaths") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 6),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text(size = 14, color = "#000000"),
+        axis.text = element_text(size = 12, color = "#000000"),
+        panel.grid = element_blank(),
+        plot.background = element_rect(fill = "#8B8B83", color = NA)
+        )
+```
+
+## Quantitative Boxplot Analysis:
+
+```{r}
+US_totals %>% ggplot() +
+  geom_boxplot(aes(x = month, y = new_cases, fill = Season), linewidth = 0.9) +
+  scale_fill_manual(values = c(
+    "Winter" = "#00EEEE",
+    "Spring" = "#7FFF00",
+    "Summer" = "#CD6600",
+    "Fall" = "#9932CC"
+  )) + 
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "New Cases Quantitative Boxplots(2020-23)",
+       x = "Date",
+       y = "New Deaths") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_line(color = "#8B8B83"),
+    panel.grid.minor = element_blank()
+  )
+
+summary(US_totals$new_cases)
+
+
+
+US_totals %>% ggplot() +
+  geom_boxplot(aes(x = month, y = new_deaths, fill = Season), linewidth = 0.9) +
+  scale_fill_manual(values = c(
+    "Winter" = "#00EEEE",
+    "Spring" = "#7FFF00",
+    "Summer" = "#CD6600",
+    "Fall" = "#9932CC"
+  )) + 
+  labs(title = "New Deaths Quantitative Boxplots(2020-23)",
+       x = "Date",
+       y = "New Deaths") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text(size = 14, color = "#000000"),
+        axis.text = element_text(size = 12, color = "#000000"),
+        panel.grid = element_blank(),
+        plot.background = element_rect(fill = "#8B8B83", color = NA)
+  )
+
+summary(US_totals$new_deaths)
+```
+
+***New Cases and New Deaths Analysis:***
+
+### New Cases
+The day that had the greatest difference in new cases was +1,354,508 more cases 
+on January 10, 2022 than January 9, 2022. Late fall 2021 - early winter 2022 
+was a time of extreme COVID-19 spread. On average, the difference in new cases was about +90,896. 
+This average is heavily influenced by outliers of days with
+huge amounts of case differences especially during December, 2021 and Janurary, 2022.
+Even when the vaccine was distributed in mid-2021, cases started to explode 
+toward the end of 2021 as people in America were trying to return to their 
+standard way of life.
+
+### New Deaths
+According to the new deaths boxplots, we can estimate the future death difference
+between two days is +985 deaths. This number does not make sense at the beginning of the 
+pandemic, but as the virus continued to spread, the amount of deaths would
+steadily increase. The day with the greatest difference in deaths was January
+12, 2021 with +4375 more people that died from COVID-19 compared to January 
+11, 2021. January, Feburary, and December have the greatest variability of 
+daily death differences as the colder weather can lead to lower sunlight and weakened immune
+systems. There are many outliers in September and October due to a pattern 
+similar to Influenza where as the weather starts to get colder and darker, 
+cases and deaths steadily go up leading into winters. 
+
+***Linear Model:***
+If there is no difference in new cases presented on a day from the day before, we could estimate a death toll difference of about +648-649 people to die that same day. According to the linear estimates,
+for every difference of +270 new cases adds +1 difference of deaths. The adjusted
+R-squared value of 0.2531 indicates a weak, positive correlation between the daily difference
+of cases and daily difference of deaths, but not enough to indicate a very 
+strong correlation. This certainly would explain the extreme spread of the data
+especially during seasonal changes. 
+
+```{r}
+mod2 <- lm(new_deaths ~ new_cases, data = US_totals)
+mod2
+summary(mod2)
+```
+
+***Project Bias:***
+There are many instances of bias that we need to account for:
+
+-Different states have different COVID protocols. We can not assume that the
+method of measurements were the same throughout all states. Healthcare is 
+different across all states as well.
+
+-This dataset presents a huge emphasis on urban trends and areas. 
+While rural areas are included, it is easy for these areas to be 
+underrepresented.
+
+-Considering that symptoms for some individuals registered as asymptomatic or
+mild, it would be wrong to assume that there were no more cases outside of 
+those reported in this study.
+
+
+***Project Conclusion:***
+January was the month with the greatest daily differences in COVID cases and 
+the cold months of January, February, and December produce enormous variability
+of daily death differences compared to warmer months. While the relationship 
+in differences between COVID-19 cases and deaths was not correlated to a powerful
+extent, the seasonal patterns align with extreme outliers as averages increase with
+colder weather. While a difference in +200-300 cases does not necessarily 
+predict how many people will die, it is still an important statistic for 
+public health information to take into consideration when examining other 
+lurking variables. While we certainly should not leave out the warmer months from early spring to earlier fall, we can safely say that winter/colder months, especially 
+January 2021 and January 2022, had the greatest COVID-19 outbreaks. In the 
+future, if more pandemics are to occur, we can at least try to focus our efforts 
+toward stronger healthcare in colder months and give individuals incentives that
+allow them to practice habits and activities to enhance their overall health.
+
+```{r}
+sessionInfo()
+```
